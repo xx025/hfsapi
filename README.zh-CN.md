@@ -32,6 +32,9 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
     for e in data.get("list", []):
         print(e["n"], entry_size(e), entry_created(e), entry_modified(e))
 
+    # 创建文件夹（与网页「新建文件夹」一致）
+    client.create_folder("data", "myfolder")
+
     # 上传
     client.upload_file("data", b"content", filename="hello.txt", use_put=True)
 ```
@@ -45,6 +48,7 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
 | **get_file_list**(uri, offset, limit, search, request_c_and_m) | 获取目录列表及当前用户在该目录的权限、条目元数据。 |
 | **list_entries**(uri, ...) | 仅返回 `get_file_list` 的 `list` 数组。 |
 | **upload_file**(folder, file_content, filename, use_put, put_params, use_session_for_put) | 上传文件到指定目录。 |
+| **create_folder**(parent_folder, new_name, use_put) | 在父目录下创建新文件夹（与网页「新建文件夹」一致）。 |
 | **delete_file**(folder, filename) | 删除指定目录下的文件。 |
 | **get_config**(only, omit) / **set_config**(values) | 读取/写入 HFS 配置；可改 VFS 与权限等。 |
 | **get_vfs()** | 获取当前 VFS 树（含权限结构）。 |

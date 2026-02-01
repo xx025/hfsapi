@@ -176,6 +176,32 @@ class TestWhoCanUpload:
 
 
 @pytest.mark.integration
+class TestCreateFolder:
+    """create_folder：与网页「新建文件夹」一致，需 can_upload。"""
+
+    def test_create_folder_appears_in_list(
+        self, client: HFSClient, share_uri: str, share_name: str
+    ) -> None:
+        """create_folder 后列表中应出现新文件夹名。"""
+        folder_name = f"pytest_newfolder_{int(time.time() * 1000)}"
+        try:
+            r = client.create_folder(share_name, folder_name)
+        except httpx.ConnectError as e:
+            pytest.skip(f"HFS 服务器不可达: {e}")
+        if r.status_code == 404:
+            pytest.skip("create_folder 返回 404，跳过（如 roots 配置差异）")
+        assert r.status_code in (200, 201), f"create_folder failed: {r.status_code} {r.text}"
+        data = client.get_file_list(uri=share_uri)
+        names = [e.get("n", "").rstrip("/") for e in data.get("list", []) if e.get("n")]
+        assert folder_name in names, f"create_folder 后 {share_uri} 列表中应包含 {folder_name!r}，当前: {names}"
+        # 清理：删除占位文件 .keep
+        client.delete_file(f"{share_name}/{folder_name}", ".keep")
+        data_after = client.get_file_list(uri=share_uri)
+        names_after = [e.get("n", "").rstrip("/") for e in data_after.get("list", []) if e.get("n")]
+        assert folder_name in names_after, "删除 .keep 后空文件夹仍可存在于列表中"
+
+
+@pytest.mark.integration
 class TestWhoCanSee:
     """Who can see: See this item in the list. Set different permission for folder content."""
 

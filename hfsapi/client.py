@@ -255,6 +255,31 @@ class HFSClient:
         url = f"/{path}" if path else "/"
         return self._get_client().delete(url)
 
+    # ------------------------- 创建目录（与网页「新建文件夹」一致） -------------------------
+
+    def create_folder(self, parent_folder: str, new_name: str, *, use_put: bool = True) -> httpx.Response:
+        """
+        在指定父目录下创建新文件夹（与 HFS 网页「新建文件夹」等效）。
+
+        实现方式：向 parent_folder/new_name/.keep 上传空文件；HFS 服务端在上传时会
+        fs.mkdirSync(dir, { recursive: true })，从而创建 new_name 目录。需当前用户有 can_upload 权限。
+
+        :param parent_folder: 父目录路径，如 "data" 或 "data/sub"
+        :param new_name: 新文件夹名称（仅名称，不含路径）
+        :param use_put: True 时用 PUT 上传占位文件（推荐）；False 时用 POST multipart
+        :return: 响应对象，可检查 .status_code（200/201 表示成功）
+        """
+        # 占位文件名，与网页新建空文件夹时行为一致（服务端会递归创建父目录）
+        placeholder = f"{new_name.strip('/')}/.keep"
+        return self.upload_file(
+            parent_folder,
+            b"",
+            filename=placeholder,
+            use_put=use_put,
+            put_params={"resume": "0!"} if use_put else None,
+            use_session_for_put=use_put,
+        )
+
     # ------------------------- 配置（权限、VFS、Serve as web-page 等） -------------------------
 
     def get_config(

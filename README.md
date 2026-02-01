@@ -32,6 +32,9 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
     for e in data.get("list", []):
         print(e["n"], entry_size(e), entry_created(e), entry_modified(e))
 
+    # Create folder (same as “New folder” in the web UI)
+    client.create_folder("data", "myfolder")
+
     # Upload
     client.upload_file("data", b"content", filename="hello.txt", use_put=True)
 ```
@@ -45,6 +48,7 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
 | **get_file_list**(uri, offset, limit, search, request_c_and_m) | Get directory listing, current user permissions, and entry metadata. |
 | **list_entries**(uri, ...) | Returns only the `list` array from `get_file_list`. |
 | **upload_file**(folder, file_content, filename, use_put, put_params, use_session_for_put) | Upload a file to the given folder. |
+| **create_folder**(parent_folder, new_name, use_put) | Create a new folder under the parent (same as “New folder” in the web UI). |
 | **delete_file**(folder, filename) | Delete a file under the given folder. |
 | **get_config**(only, omit) / **set_config**(values) | Read/write HFS config; e.g. VFS and permissions. |
 | **get_vfs()** | Get current VFS tree (including permission structure). |
