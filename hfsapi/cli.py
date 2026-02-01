@@ -97,7 +97,9 @@ def _cmd_list_impl(
     base_url: str | None,
 ) -> None:
     client = _require_client(base_url)
-    uri = uri or "/"
+    # 前有无 / 均可：data、/data 都转为 /data
+    uri = (uri or "/").strip("/")
+    uri = f"/{uri}" if uri else "/"
     try:
         data = client.get_file_list(uri=uri, request_c_and_m=True)
     except Exception as e:
@@ -162,7 +164,7 @@ def upload_cmd(
                 raise typer.Exit(1)
             typer.echo("Uploaded.")
         elif path.is_dir():
-            ok, failed = client.upload_folder(folder.strip("/"), path)
+            ok, failed = client.upload_folder((folder or "").strip("/"), path)
             client.close()
             typer.echo(f"Uploaded {ok} file(s).")
             if failed:
@@ -191,7 +193,8 @@ def download_cmd(
     base_url: _base_url_option = None,
 ) -> None:
     client = _require_client(base_url)
-    remote = remote_path.strip("/")
+    # 前有无 / 均可
+    remote = (remote_path or "").strip("/")
     out = str(output) if output is not None else Path(remote).name
     try:
         client.download_file(remote, save_to=out)
@@ -206,15 +209,20 @@ def download_cmd(
 # ------------------------- mkdir -------------------------
 
 
-@app.command("mkdir", help="Create a folder")
+@app.command("mkdir", help="Create a folder (path: e.g. data/myfolder or /data/myfolder)")
 def mkdir_cmd(
-    parent_folder: Annotated[str, typer.Argument(help="Parent folder (e.g. data)")],
-    new_folder_name: Annotated[str, typer.Argument(help="New folder name")],
+    path: Annotated[str, typer.Argument(help="Full path (leading / optional)")],
     base_url: _base_url_option = None,
 ) -> None:
+    path = (path or "").strip("/")
+    if "/" in path:
+        parent, new_name = path.rsplit("/", 1)
+        parent = parent.strip("/")
+        new_name = new_name.strip("/")
+    else:
+        parent = ""
+        new_name = path
     client = _require_client(base_url)
-    parent = parent_folder.strip("/")
-    new_name = new_folder_name.strip("/")
     try:
         r = client.create_folder(parent, new_name)
     except Exception as e:
@@ -231,14 +239,19 @@ def mkdir_cmd(
 # ------------------------- delete -------------------------
 
 
-@app.command("delete", help="Delete a file")
+@app.command("delete", help="Delete a file (path: e.g. data/foo.txt or /data/foo.txt)")
 def delete_cmd(
-    folder: Annotated[str, typer.Argument(help="Folder containing the file (e.g. data)")],
-    filename: Annotated[str, typer.Argument(help="File name to delete")],
+    path: Annotated[str, typer.Argument(help="Full path (leading / optional)")],
     base_url: _base_url_option = None,
 ) -> None:
+    path = (path or "").strip("/")
+    if "/" in path:
+        folder, filename = path.rsplit("/", 1)
+        folder = folder.strip("/")
+    else:
+        folder = ""
+        filename = path
     client = _require_client(base_url)
-    folder = folder.strip("/")
     try:
         r = client.delete_file(folder, filename)
     except Exception as e:

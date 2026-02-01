@@ -9,15 +9,23 @@ Python API client for [HFS (HTTP File Server)](https://github.com/rejetto/hfs): 
 
 ## Install
 
-From PyPI (recommended):
+**Global CLI (recommended)** — install so the `hfs` command is available everywhere:
+
+```bash
+uv tool install hfsapi
+# or (system / user level)
+pip install hfsapi
+```
+
+**As a project dependency** (e.g. for `import hfsapi` in your code):
 
 ```bash
 pip install hfsapi
-# or
+# or in a uv-managed project
 uv add hfsapi
 ```
 
-From source:
+**From source:**
 
 ```bash
 uv sync
@@ -44,16 +52,16 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
 
 ## CLI
 
-After `pip install hfsapi`, the `hfs` command is available. Log in once to save credentials locally; all other commands then use them (or pass `--base-url` if not logged in).
+After installing (e.g. `uv tool install hfsapi` or `pip install hfsapi`), the `hfs` command is available. Log in once to save credentials locally; all other commands then use them (or pass `--base-url` if not logged in).
 
 ```bash
 hfs login --base-url http://127.0.0.1:8280 -u abct -p abc123
 hfs list /data
 hfs upload ./local.txt --folder data
 hfs upload ./mydir --folder data   # folder: upload recursively
-hfs mkdir data myfolder
+hfs mkdir data/myfolder
 hfs download data/foo.txt -o ./foo.txt
-hfs delete data foo.txt
+hfs delete data/foo.txt
 hfs config get
 hfs vfs
 hfs info

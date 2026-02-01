@@ -38,12 +38,12 @@ pip install -e .
 cd tools && docker compose up -d
 ```
 
-启动后需在 HFS 内**手动创建用户**（示例账号：用户名 `abct`、密码 `abc123`），并为分享目录 `/data` 设置「Any account login」等权限，测试与示例脚本才能通过。
+启动后需在 HFS 内**手动创建用户**，并为分享目录 `/data` 设置「Any account login」等权限，测试与示例脚本才能通过。
 
 - 地址：`http://127.0.0.1:8280/data/`（本机访问可用 `127.0.0.1` 或 `localhost`）
-- 示例账号：用户名 `abct`，密码 `abc123`（需在 HFS 中自行创建）
+- **集成测试会对 `tests/config.py` 中 `HFS_TEST_ACCOUNTS` 的每个账号各执行一遍**，因此需在 HFS 中创建这些账号（默认：用户名 `abct` 密码 `abc123`、用户名 `你好` 密码 `abc123`）。
 
-示例脚本与测试的**服务器地址、分享路径、账号**统一写在 **`tests/config.py`**，可按实际环境修改。
+示例脚本与测试的**服务器地址、分享路径、账号列表**统一写在 **`tests/config.py`**，可按实际环境修改。
 
 运行示例：
 

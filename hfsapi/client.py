@@ -10,9 +10,15 @@ from __future__ import annotations
 import io
 from pathlib import Path
 from typing import Any, BinaryIO
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
+
+
+def _path_for_url(path: str) -> str:
+    """将路径按段做 UTF-8 百分号编码，供 URL 使用（避免中文等非 ASCII 导致 ascii codec 错误）。"""
+    segments = (path.strip("/").split("/") if path.strip("/") else [])
+    return "/" + "/".join(quote(seg, safe="") for seg in segments) if segments else "/"
 
 from hfsapi.models import DirEntry, FileListResponse
 
@@ -53,11 +59,21 @@ class HFSClient:
         self._api_base = f"{self.base_url}/~/api"
         self._client: httpx.Client | None = None
 
+    def _username_has_non_ascii(self) -> bool:
+        """用户名是否含非 ASCII（如中文）；此类账号用会话认证避免服务端 Basic 解码问题。"""
+        if not self.username:
+            return False
+        return any(ord(c) > 127 for c in self.username)
+
     def _get_client(self) -> httpx.Client:
         if self._client is None or self._client.is_closed:
             auth = None
+            use_session_for_non_ascii = False
             if self.username is not None and self.password is not None:
-                auth = (self.username, self.password)
+                if self._username_has_non_ascii():
+                    use_session_for_non_ascii = True
+                else:
+                    auth = (self.username, self.password)
             self._client = httpx.Client(
                 base_url=self.base_url,
                 auth=auth,
@@ -65,6 +81,9 @@ class HFSClient:
                 verify=self.verify,
                 follow_redirects=True,
             )
+            if use_session_for_non_ascii:
+                login_value = f"{self.username}:{self.password}"
+                self._client.get(f"/?{urlencode({'login': login_value})}")
         return self._client
 
     def _post_headers(self) -> dict[str, str]:
@@ -92,7 +111,8 @@ class HFSClient:
         """
         if self.username is None or self.password is None:
             return False
-        url = f"{self.base_url}/?login={self.username}:{self.password}"
+        login_value = f"{self.username}:{self.password}"
+        url = f"{self.base_url}/?{urlencode({'login': login_value})}"
         try:
             r = self._get_client().get(url)
             return r.is_success
@@ -196,17 +216,17 @@ class HFSClient:
         if use_put:
             if not filename:
                 raise ValueError("use_put=True 时必须提供 filename")
-            # 使用相对路径，避免带 base_url 的 client 将 URL 重复拼接（与 download_file 一致）
+            # 使用相对路径并做 UTF-8 百分号编码，避免中文等非 ASCII 路径导致 ascii codec 错误
             path = f"{folder}/{filename}".replace("//", "/") if folder else filename
-            url = f"/{path}" if path else "/"
+            url = _path_for_url(path)
             if isinstance(file_content, bytes):
                 body = file_content
             else:
                 body = file_content.read()
             if put_params:
                 url = f"{url}?{urlencode(put_params)}"
-            # 与 HFS 前端一致：Referer 为当前目录 URL
-            referer = f"{self.base_url}/{folder}/".replace("//", "/") if folder else f"{self.base_url}/"
+            # 与 HFS 前端一致：Referer 为当前目录 URL（路径需编码）
+            referer = f"{self.base_url}{_path_for_url(folder)}{'/' if folder else ''}" if folder else f"{self.base_url}/"
             headers = {**self._post_headers(), "Referer": referer}
             if use_session_for_put and self.username and self.password:
                 session_client = httpx.Client(
@@ -216,9 +236,10 @@ class HFSClient:
                     follow_redirects=True,
                 )
                 try:
-                    session_client.get(f"/?login={self.username}:{self.password}")
+                    login_value = f"{self.username}:{self.password}"
+                    session_client.get(f"/?{urlencode({'login': login_value})}")
                     if folder:
-                        session_client.get(f"/{folder}/")
+                        session_client.get(f"{_path_for_url(folder)}/")
                     r = session_client.put(url, content=body, headers=headers)
                     # HFS roots：若 host 映射到 root（如 /data），需发 PUT /filename 相对 root
                     if r.status_code == 404 and folder:
@@ -228,8 +249,8 @@ class HFSClient:
                 finally:
                     session_client.close()
             return self._get_client().put(url, content=body, headers=headers)
-        # POST multipart：HFS 文档写的是 curl -F upload=@FILE FOLDER/，字段名用 upload
-        url = f"{self.base_url}/{folder}".replace("//", "/") if folder else self.base_url
+        # POST multipart：HFS 文档写的是 curl -F upload=@FILE FOLDER/，字段名用 upload（路径需编码）
+        url = f"{self.base_url}{_path_for_url(folder)}" if folder else self.base_url
         if isinstance(file_content, bytes):
             file_content = io.BytesIO(file_content)
         files = {"upload": (filename or "file", file_content, "application/octet-stream")}

@@ -9,15 +9,23 @@
 
 ## 安装
 
-从 PyPI 安装（推荐）：
+**全局使用 CLI（推荐）** — 安装后可在任意目录使用 `hfs` 命令：
+
+```bash
+uv tool install hfsapi
+# 或（系统/用户级）
+pip install hfsapi
+```
+
+**作为项目依赖**（如在代码中 `import hfsapi`）：
 
 ```bash
 pip install hfsapi
-# 或
+# 或在 uv 管理的项目中
 uv add hfsapi
 ```
 
-从源码安装：
+**从源码安装：**
 
 ```bash
 uv sync
@@ -44,16 +52,16 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
 
 ## CLI
 
-安装后可使用 `hfs` 命令。认证一次保存到本地，其它命令自动使用；未登录时可传 `--base-url`。
+安装后（如 `uv tool install hfsapi` 或 `pip install hfsapi`）即可使用 `hfs` 命令。认证一次保存到本地，其它命令自动使用；未登录时可传 `--base-url`。
 
 ```bash
 hfs login --base-url http://127.0.0.1:8280 -u abct -p abc123
 hfs list /data
 hfs upload ./local.txt --folder data
 hfs upload ./mydir --folder data   # 目录：递归上传
-hfs mkdir data myfolder
+hfs mkdir data/myfolder
 hfs download data/foo.txt -o ./foo.txt
-hfs delete data foo.txt
+hfs delete data/foo.txt
 hfs config get
 hfs vfs
 hfs info

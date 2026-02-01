@@ -47,6 +47,29 @@ def test_login_saves_config() -> None:
     assert cfg["password"] == "p"
 
 
+def test_login_with_chinese_username_saves_and_loads_correctly() -> None:
+    """中文用户名 你好 / 密码 abc123 能正确保存并读出，避免 401。"""
+    result = runner.invoke(
+        app,
+        [
+            "login",
+            "--base-url", "http://127.0.0.1:8280",
+            "--username", "你好",
+            "--password", "abc123",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Saved." in result.stdout
+
+    from hfsapi.cli_config import load_config
+
+    cfg = load_config()
+    assert cfg is not None
+    assert cfg["base_url"] == "http://127.0.0.1:8280"
+    assert cfg["username"] == "你好"
+    assert cfg["password"] == "abc123"
+
+
 def test_logout_clears_config() -> None:
     """logout 清除配置并输出 Cleared.。"""
     from hfsapi.cli_config import load_config, save_config
