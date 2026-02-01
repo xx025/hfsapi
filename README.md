@@ -2,6 +2,9 @@
 
 **English** | [中文](README.zh-CN.md)
 
+[![development 100% AI](https://img.shields.io/badge/development-100%25%20AI-8A2BE2)](AI.md)
+[![author](https://img.shields.io/badge/author-Multiple%20AI%20models%20(mixed)-blue)](AI.md)
+
 Python API client for [HFS (HTTP File Server)](https://github.com/rejetto/hfs): login, file listing, upload, config, and permissions.
 
 ## Install
@@ -57,3 +60,5 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
 In list responses: `n` = name, `s` = size, `c`/`m` = created/modified time; `can_archive`, `can_upload`, `can_delete`, etc. indicate the current user’s permissions for that directory.
 
 More details (permission mapping, testing, publishing, upload options and roots) in **[HELP.md](HELP.md)**.
+
+**Legal:** [DISCLAIMER.md](DISCLAIMER.md) — no warranty, no liability, use at your own risk.

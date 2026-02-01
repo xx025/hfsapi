@@ -2,6 +2,9 @@
 
 [English](README.md) | **中文**
 
+[![development 100% AI](https://img.shields.io/badge/development-100%25%20AI-8A2BE2)](AI.md)
+[![author](https://img.shields.io/badge/author-Multiple%20AI%20models%20(mixed)-blue)](AI.md)
+
 [HFS (HTTP File Server)](https://github.com/rejetto/hfs) 的 Python API 客户端，支持登录、文件列表、上传、配置与权限相关操作。
 
 ## 安装
@@ -57,3 +60,5 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
 列表响应中：`n` 名称、`s` 大小、`c`/`m` 创建/修改时间；`can_archive`、`can_upload`、`can_delete` 等表示当前用户在该目录的权限。
 
 更多说明（权限对应、测试、发布、上传方式与 roots 等）见 **[HELP.md](HELP.md)**。
+
+**法律声明：** [DISCLAIMER.md](DISCLAIMER.md) — 不提供担保、不承担责任，使用风险自负。
