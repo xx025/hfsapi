@@ -8,6 +8,7 @@ HFS (HTTP File Server) Python API 客户端。
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from typing import Any, BinaryIO
 from urllib.parse import urlencode
 
@@ -237,6 +238,50 @@ class HFSClient:
             files=files,
             headers=self._post_headers(),
         )
+
+    def upload_folder(
+        self,
+        parent_folder: str,
+        local_path: str | Path,
+        *,
+        use_put: bool = True,
+    ) -> tuple[int, list[tuple[str, str]]]:
+        """
+        递归上传本地目录到远程 parent_folder，保持相对路径结构。
+
+        仅上传文件，子目录通过文件名中的路径（如 subdir/file.txt）由服务端自动创建。
+        需当前用户有 can_upload 权限。
+
+        :param parent_folder: 远程父目录，如 "data"
+        :param local_path: 本地目录路径
+        :param use_put: 是否使用 PUT 上传（与 upload_file 一致）
+        :return: (成功数, 失败列表 [(相对路径, 错误信息)])
+        """
+        local_path = Path(local_path)
+        if not local_path.is_dir():
+            raise NotADirectoryError(f"not a directory: {local_path}")
+        ok = 0
+        failed: list[tuple[str, str]] = []
+        put_params = {"resume": "0!"} if use_put else None
+        for f in sorted(local_path.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(local_path)
+            rel_str = str(rel).replace("\\", "/")
+            content = f.read_bytes()
+            r = self.upload_file(
+                parent_folder,
+                content,
+                filename=rel_str,
+                use_put=use_put,
+                put_params=put_params,
+                use_session_for_put=use_put,
+            )
+            if r.status_code in (200, 201):
+                ok += 1
+            else:
+                failed.append((rel_str, f"{r.status_code} {r.text}"))
+        return (ok, failed)
 
     # ------------------------- 删除（对应「谁可以删除」） -------------------------
 

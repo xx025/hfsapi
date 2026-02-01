@@ -42,6 +42,26 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
     client.upload_file("data", b"content", filename="hello.txt", use_put=True)
 ```
 
+## CLI
+
+安装后可使用 `hfs` 命令。认证一次保存到本地，其它命令自动使用；未登录时可传 `--base-url`。
+
+```bash
+hfs login --base-url http://127.0.0.1:8280 -u abct -p abc123
+hfs list /data
+hfs upload ./local.txt --folder data
+hfs upload ./mydir --folder data   # 目录：递归上传
+hfs mkdir data myfolder
+hfs download data/foo.txt -o ./foo.txt
+hfs delete data foo.txt
+hfs config get
+hfs vfs
+hfs info
+hfs logout
+```
+
+`hfs --help` 与 `hfs <命令> --help` 查看选项。
+
 ## 核心 API
 
 | 方法 / 函数 | 说明 |

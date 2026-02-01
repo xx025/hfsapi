@@ -42,6 +42,26 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
     client.upload_file("data", b"content", filename="hello.txt", use_put=True)
 ```
 
+## CLI
+
+After `pip install hfsapi`, the `hfs` command is available. Log in once to save credentials locally; all other commands then use them (or pass `--base-url` if not logged in).
+
+```bash
+hfs login --base-url http://127.0.0.1:8280 -u abct -p abc123
+hfs list /data
+hfs upload ./local.txt --folder data
+hfs upload ./mydir --folder data   # folder: upload recursively
+hfs mkdir data myfolder
+hfs download data/foo.txt -o ./foo.txt
+hfs delete data foo.txt
+hfs config get
+hfs vfs
+hfs info
+hfs logout
+```
+
+See `hfs --help` and `hfs <command> --help` for options.
+
 ## Core API
 
 | Method / function | Description |
