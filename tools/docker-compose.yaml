@@ -1,0 +1,14 @@
+services:
+  hfs:
+    image: rejetto/hfs:latest
+    volumes:
+      - hfsconf:/home/hfs/.hfs
+      - hfsdata:/data
+    environment:
+      - HFS_CREATE_ADMIN=password123 
+    ports:
+      - "8280:80"
+
+volumes:
+  hfsconf:
+  hfsdata:
