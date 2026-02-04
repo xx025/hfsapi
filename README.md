@@ -68,6 +68,8 @@ hfs info
 hfs logout
 ```
 
+**Path or URL:** For `list`, `upload --folder`, `download`, `mkdir`, and `delete`, you can pass either a path (e.g. `data/foo.txt`) or a full URL (e.g. `http://127.0.0.1:8280/data/foo.txt`). A URL is parsed to use that server and path for that command.
+
 See `hfs --help` and `hfs <command> --help` for options.
 
 ## Core API

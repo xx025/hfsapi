@@ -70,6 +70,8 @@ hfs logout
 
 `hfs --help` 与 `hfs <命令> --help` 查看选项。
 
+**路径或链接：** `list`、`upload --folder`、`download`、`mkdir`、`delete` 既可传路径（如 `data/foo.txt`），也可直接粘贴完整链接（如 `http://127.0.0.1:8280/data/foo.txt`），会自动解析出服务器与路径。
+
 ## 核心 API
 
 | 方法 / 函数 | 说明 |

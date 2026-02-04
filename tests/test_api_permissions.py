@@ -1,6 +1,7 @@
 """
 HFS /data 目录权限相关 API 的 pytest 测试。
 
+服务器、分享路径、账号均来自 tests.config；client 由 conftest 按 HFS_TEST_ACCOUNTS 参数化，每账号各跑一遍。
 对应界面权限（Any account login）：
 - Who can zip           → can_archive（用户以 ZIP 下载时是否包含此项）
 - Who can access list   → 能成功调用 get_file_list，列表仅包含可见项

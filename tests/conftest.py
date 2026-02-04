@@ -14,6 +14,7 @@ from hfsapi import HFSClient
 from tests.config import (
     HFS_BASE_URL,
     HFS_SHARE_URI,
+    HFS_SHARE_NAME,
     HFS_TEST_ACCOUNTS,
 )
 
@@ -38,8 +39,8 @@ def share_uri() -> str:
 
 @pytest.fixture(scope="module")
 def share_name() -> str:
-    """分享目录名，用于 upload_file/delete_file 等（如 data）。"""
-    return HFS_SHARE_URI.strip("/").split("/")[0] or "data"
+    """分享目录名，用于 upload_file/delete_file 等（来自 config）。"""
+    return HFS_SHARE_NAME
 
 
 @pytest.fixture(scope="module")

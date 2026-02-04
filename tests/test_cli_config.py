@@ -1,5 +1,5 @@
 """
-CLI 认证配置（cli_config）单元测试。
+CLI 认证配置（cli_config）单元测试。URL/账号均从 tests.config 读取。
 """
 
 from __future__ import annotations
@@ -7,6 +7,8 @@ from __future__ import annotations
 import pytest
 
 from hfsapi.cli_config import clear_config, load_config, save_config
+
+from tests.config import HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD
 
 
 @pytest.fixture(autouse=True)
@@ -43,36 +45,36 @@ def test_load_config_missing_base_url_returns_none(tmp_path: pytest.TempPathFact
 
 
 def test_save_config_creates_dir_and_file() -> None:
-    """save_config 创建目录并写入 config.json。"""
-    save_config("http://127.0.0.1:8280", "abct", "abc123")
+    """save_config 创建目录并写入 config.json（使用 config 的 base_url/账号）。"""
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
     cfg = load_config()
     assert cfg is not None
-    assert cfg["base_url"] == "http://127.0.0.1:8280"
-    assert cfg["username"] == "abct"
-    assert cfg["password"] == "abc123"
+    assert cfg["base_url"] == HFS_BASE_URL
+    assert cfg["username"] == HFS_USERNAME
+    assert cfg["password"] == HFS_PASSWORD
 
 
 def test_save_config_strips_trailing_slash() -> None:
     """save_config 会去掉 base_url 末尾斜杠。"""
-    save_config("http://127.0.0.1:8280/", "u", "p")
+    save_config(f"{HFS_BASE_URL}/", "u", "p")
     cfg = load_config()
     assert cfg is not None
-    assert cfg["base_url"] == "http://127.0.0.1:8280"
+    assert cfg["base_url"] == HFS_BASE_URL
 
 
 def test_save_config_optional_username_password() -> None:
     """save_config 可不传 username/password。"""
-    save_config("http://127.0.0.1:8280")
+    save_config(HFS_BASE_URL)
     cfg = load_config()
     assert cfg is not None
-    assert cfg["base_url"] == "http://127.0.0.1:8280"
+    assert cfg["base_url"] == HFS_BASE_URL
     assert "username" not in cfg or cfg.get("username") is None
     assert "password" not in cfg or cfg.get("password") is None
 
 
 def test_clear_config_removes_file() -> None:
     """clear_config 删除配置文件并返回 True。"""
-    save_config("http://127.0.0.1:8280", "u", "p")
+    save_config(HFS_BASE_URL, "u", "p")
     assert load_config() is not None
     assert clear_config() is True
     assert load_config() is None

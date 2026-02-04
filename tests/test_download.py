@@ -1,7 +1,7 @@
 """
 HFS 分享目录下载功能测试。
 
-将测试服务器分享目录下的文件下载到项目 runs/ 目录（见 tests.config）。
+服务器、分享 URI、runs 目录均来自 tests.config；client 由 conftest 按 HFS_TEST_ACCOUNTS 参数化。
 """
 
 from __future__ import annotations

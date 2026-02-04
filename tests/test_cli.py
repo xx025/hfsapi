@@ -1,15 +1,27 @@
 """
 CLI（typer）单元测试。不依赖真实 HFS 服务器，通过 mock 验证命令与输出。
+所有 URL、路径、账号均从 tests.config 读取，覆盖路径/URL、有无认证等多种条件。
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
 
 from hfsapi.cli import app
+
+from tests.config import (
+    HFS_BASE_URL,
+    HFS_FULL_URL_FILE,
+    HFS_FULL_URL_LIST,
+    HFS_SHARE_NAME,
+    HFS_SAMPLE_REMOTE_FILE,
+    HFS_USERNAME,
+    HFS_PASSWORD,
+)
 
 runner = CliRunner()
 
@@ -30,10 +42,10 @@ def _patch_config_path(monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPat
 
 
 def test_login_saves_config() -> None:
-    """login 使用参数时调用 save_config 并输出 Saved.。"""
+    """login 使用参数时调用 save_config 并输出 Saved.（base_url 来自 config）。"""
     result = runner.invoke(
         app,
-        ["login", "--base-url", "http://127.0.0.1:8280", "--username", "u", "--password", "p"],
+        ["login", "--base-url", HFS_BASE_URL, "--username", "u", "--password", "p"],
     )
     assert result.exit_code == 0
     assert "Saved." in result.stdout
@@ -42,20 +54,23 @@ def test_login_saves_config() -> None:
 
     cfg = load_config()
     assert cfg is not None
-    assert cfg["base_url"] == "http://127.0.0.1:8280"
+    assert cfg["base_url"] == HFS_BASE_URL
     assert cfg["username"] == "u"
     assert cfg["password"] == "p"
 
 
 def test_login_with_chinese_username_saves_and_loads_correctly() -> None:
-    """中文用户名 你好 / 密码 abc123 能正确保存并读出，避免 401。"""
+    """中文用户名 你好 / 密码 abc123 能正确保存并读出（账号来自 config）。"""
+    from tests.config import HFS_TEST_ACCOUNTS
+
+    acc = HFS_TEST_ACCOUNTS[1]
     result = runner.invoke(
         app,
         [
             "login",
-            "--base-url", "http://127.0.0.1:8280",
-            "--username", "你好",
-            "--password", "abc123",
+            "--base-url", HFS_BASE_URL,
+            "--username", acc["username"],
+            "--password", acc["password"],
         ],
     )
     assert result.exit_code == 0
@@ -65,9 +80,9 @@ def test_login_with_chinese_username_saves_and_loads_correctly() -> None:
 
     cfg = load_config()
     assert cfg is not None
-    assert cfg["base_url"] == "http://127.0.0.1:8280"
-    assert cfg["username"] == "你好"
-    assert cfg["password"] == "abc123"
+    assert cfg["base_url"] == HFS_BASE_URL
+    assert cfg["username"] == acc["username"]
+    assert cfg["password"] == acc["password"]
 
 
 def test_logout_clears_config() -> None:
@@ -96,13 +111,13 @@ def test_auth_status_not_logged_in() -> None:
 
 
 def test_auth_status_logged_in() -> None:
-    """已登录时 auth status 输出 base_url 和 auth: yes。"""
+    """已登录时 auth status 输出 base_url 和 auth: yes（config 的 base_url）。"""
     from hfsapi.cli_config import save_config
 
-    save_config("http://127.0.0.1:8280", "u", "p")
+    save_config(HFS_BASE_URL, "u", "p")
     result = runner.invoke(app, ["auth", "status"])
     assert result.exit_code == 0
-    assert "base_url: http://127.0.0.1:8280" in result.stdout
+    assert f"base_url: {HFS_BASE_URL}" in result.stdout
     assert "auth: yes" in result.stdout
 
 
@@ -117,14 +132,44 @@ def test_info_not_logged_in() -> None:
 
 
 def test_info_logged_in() -> None:
-    """已登录时 info 输出 base_url 和 auth。"""
+    """已登录时 info 输出 base_url 和 auth（config 的 base_url）。"""
     from hfsapi.cli_config import save_config
 
-    save_config("http://127.0.0.1:8280", "u", "p")
+    save_config(HFS_BASE_URL, "u", "p")
     result = runner.invoke(app, ["info"])
     assert result.exit_code == 0
-    assert "base_url: http://127.0.0.1:8280" in result.stdout
+    assert f"base_url: {HFS_BASE_URL}" in result.stdout
     assert "auth: yes" in result.stdout
+
+
+# ------------------------- path or URL 解析 -------------------------
+
+
+def test_parse_path_or_url() -> None:
+    """路径与完整链接均能解析为 (path, base_url_override)；含 config 中的 URL。"""
+    from hfsapi.cli import _parse_path_or_url
+
+    # 纯路径
+    path, base = _parse_path_or_url(HFS_SAMPLE_REMOTE_FILE)
+    assert path == HFS_SAMPLE_REMOTE_FILE
+    assert base is None
+
+    path, base = _parse_path_or_url("/data/foo")
+    assert path == "data/foo"
+    assert base is None
+
+    # 完整 URL（与 config 一致）
+    path, base = _parse_path_or_url(HFS_FULL_URL_FILE)
+    assert path == HFS_SAMPLE_REMOTE_FILE
+    assert base == HFS_BASE_URL
+
+    path, base = _parse_path_or_url("https://example.com:8080/share/sub/")
+    assert path == "share/sub"
+    assert base == "https://example.com:8080"
+
+    path, base = _parse_path_or_url("  http://host/data  ")
+    assert path == "data"
+    assert base == "http://host"
 
 
 # ------------------------- list（需 mock client） -------------------------
@@ -141,10 +186,10 @@ def test_list_without_credentials_exits_1() -> None:
 
 
 def test_list_with_mock_client() -> None:
-    """有认证时 list 调用 get_file_list 并输出列表。"""
+    """有认证时 list 调用 get_file_list 并输出列表（路径来自 config）。"""
     from hfsapi.cli_config import save_config
 
-    save_config("http://127.0.0.1:8280", "u", "p")
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
     mock_client = MagicMock()
     mock_client.get_file_list.return_value = {
         "list": [
@@ -154,12 +199,152 @@ def test_list_with_mock_client() -> None:
     }
 
     with patch("hfsapi.cli._get_client", return_value=mock_client):
-        result = runner.invoke(app, ["list", "/data"])
+        result = runner.invoke(app, ["list", HFS_SHARE_NAME])
     assert result.exit_code == 0
     assert "file1.txt" in result.stdout
     assert "dir/" in result.stdout
     mock_client.get_file_list.assert_called_once()
     mock_client.close.assert_called_once()
+
+
+def test_list_with_url_parses_link() -> None:
+    """list 传入完整 URL 时解析出 path，并用 URL 的 base 创建 client（config URL）。"""
+    from hfsapi.cli_config import save_config
+
+    save_config("http://other:9999", "u", "p")
+    mock_client = MagicMock()
+    mock_client.get_file_list.return_value = {"list": []}
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client) as get_client:
+        runner.invoke(app, ["list", HFS_FULL_URL_LIST])
+    get_client.assert_called_once()
+    assert get_client.call_args[0][0] == HFS_BASE_URL
+    mock_client.get_file_list.assert_called_once()
+    assert mock_client.get_file_list.call_args[1]["uri"] == f"/{HFS_SHARE_NAME}"
+
+
+# ------------------------- upload / download / mkdir / delete（mock，多条件） -------------------------
+
+
+def test_upload_with_path_folder_calls_client(tmp_path: Path) -> None:
+    """upload 使用路径形式的 --folder 时传入解析后的 path（config 的 share）。"""
+    from hfsapi.cli_config import save_config
+
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    mock_client = MagicMock()
+    mock_client.upload_file.return_value = MagicMock(status_code=200)
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client):
+        runner.invoke(app, ["upload", str(f), "--folder", HFS_SHARE_NAME])
+    mock_client.upload_file.assert_called_once()
+    assert mock_client.upload_file.call_args[0][0] == HFS_SHARE_NAME
+
+
+def test_upload_with_url_folder_parses_and_calls(tmp_path: Path) -> None:
+    """upload --folder 为完整 URL 时解析出 base 与 path 并调用 client。"""
+    from hfsapi.cli_config import save_config
+
+    save_config("http://other:9999", "u", "p")
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    mock_client = MagicMock()
+    mock_client.upload_file.return_value = MagicMock(status_code=200)
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client) as get_client:
+        runner.invoke(app, ["upload", str(f), "--folder", HFS_FULL_URL_LIST])
+    get_client.assert_called_once()
+    assert get_client.call_args[0][0] == HFS_BASE_URL
+    assert mock_client.upload_file.call_args[0][0] == HFS_SHARE_NAME
+
+
+def test_download_with_path_calls_client() -> None:
+    """download 使用路径时调用 download_file（path 来自 config）。"""
+    from hfsapi.cli_config import save_config
+
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
+    mock_client = MagicMock()
+    mock_client.download_file.return_value = b"content"
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client):
+        runner.invoke(app, ["download", HFS_SAMPLE_REMOTE_FILE])
+    mock_client.download_file.assert_called_once()
+    args = mock_client.download_file.call_args[0]
+    assert args[0] == HFS_SAMPLE_REMOTE_FILE
+
+
+def test_download_with_url_parses_and_calls() -> None:
+    """download 传入完整 URL 时解析 base 与 path 并调用 client。"""
+    from hfsapi.cli_config import save_config
+
+    save_config("http://other:9999", "u", "p")
+    mock_client = MagicMock()
+    mock_client.download_file.return_value = b"content"
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client) as get_client:
+        runner.invoke(app, ["download", HFS_FULL_URL_FILE])
+    get_client.assert_called_once()
+    assert get_client.call_args[0][0] == HFS_BASE_URL
+    assert mock_client.download_file.call_args[0][0] == HFS_SAMPLE_REMOTE_FILE
+
+
+def test_mkdir_with_path_calls_create_folder() -> None:
+    """mkdir 使用路径时解析 parent/new_name 并调用 create_folder（config 路径）。"""
+    from hfsapi.cli_config import save_config
+
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
+    mock_client = MagicMock()
+    mock_client.create_folder.return_value = MagicMock(status_code=201)
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client):
+        runner.invoke(app, ["mkdir", f"{HFS_SHARE_NAME}/newdir"])
+    mock_client.create_folder.assert_called_once()
+    assert mock_client.create_folder.call_args[0] == (HFS_SHARE_NAME, "newdir")
+
+
+def test_mkdir_with_url_parses_base_and_path() -> None:
+    """mkdir 传入完整 URL 时解析 base 与 path 并调用 create_folder。"""
+    from hfsapi.cli_config import save_config
+
+    save_config("http://other:9999", "u", "p")
+    mock_client = MagicMock()
+    mock_client.create_folder.return_value = MagicMock(status_code=201)
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client) as get_client:
+        runner.invoke(app, ["mkdir", f"{HFS_BASE_URL}/data/mydir"])
+    get_client.assert_called_once()
+    assert get_client.call_args[0][0] == HFS_BASE_URL
+    assert mock_client.create_folder.call_args[0] == ("data", "mydir")
+
+
+def test_delete_with_path_calls_delete_file() -> None:
+    """delete 使用路径时解析 folder/filename 并调用 delete_file。"""
+    from hfsapi.cli_config import save_config
+
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
+    mock_client = MagicMock()
+    mock_client.delete_file.return_value = MagicMock(status_code=204)
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client):
+        runner.invoke(app, ["delete", HFS_SAMPLE_REMOTE_FILE])
+    mock_client.delete_file.assert_called_once()
+    assert mock_client.delete_file.call_args[0] == ("data", "sample.txt")
+
+
+def test_delete_with_url_parses_base_and_path() -> None:
+    """delete 传入完整 URL 时解析 base 与 path 并调用 delete_file。"""
+    from hfsapi.cli_config import save_config
+
+    save_config("http://other:9999", "u", "p")
+    mock_client = MagicMock()
+    mock_client.delete_file.return_value = MagicMock(status_code=204)
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client) as get_client:
+        runner.invoke(app, ["delete", HFS_FULL_URL_FILE])
+    get_client.assert_called_once()
+    assert get_client.call_args[0][0] == HFS_BASE_URL
+    assert mock_client.delete_file.call_args[0] == ("data", "sample.txt")
 
 
 # ------------------------- help -------------------------

@@ -9,6 +9,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Annotated, Optional
+from urllib.parse import urlparse
 
 import typer
 
@@ -25,6 +26,24 @@ _base_url_option: type = Annotated[
     Optional[str],
     typer.Option("--base-url", "-b", help="Override saved base URL (or required if not logged in)"),
 ]
+
+
+def _parse_path_or_url(path_or_url: str) -> tuple[str, str | None]:
+    """
+    解析「路径」或「完整链接」，兼容用户直接粘贴浏览器地址。
+    返回 (path, base_url_override)。
+    - 若输入为 http(s)://host[:port]/path → path 为 path 部分（无前导 /），base_url 为 scheme://netloc
+    - 否则视为路径，返回 (strip("/") 后的路径, None)
+    """
+    raw = (path_or_url or "").strip()
+    if not raw:
+        return "", None
+    parsed = urlparse(raw)
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        path = (parsed.path or "/").strip("/")
+        base = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        return path, base
+    return raw.strip("/"), None
 
 
 def _get_client(base_url: str | None) -> HFSClient | None:
@@ -96,12 +115,12 @@ def _cmd_list_impl(
     uri: str,
     base_url: str | None,
 ) -> None:
+    path, url_override = _parse_path_or_url(uri or "/")
+    base_url = url_override or base_url
     client = _require_client(base_url)
-    # 前有无 / 均可：data、/data 都转为 /data
-    uri = (uri or "/").strip("/")
-    uri = f"/{uri}" if uri else "/"
+    uri_for_api = f"/{path}" if path else "/"
     try:
-        data = client.get_file_list(uri=uri, request_c_and_m=True)
+        data = client.get_file_list(uri=uri_for_api, request_c_and_m=True)
     except Exception as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(1)
@@ -138,20 +157,22 @@ def ls_cmd(
 @app.command("upload", help="Upload a file or a folder (file: upload one file; folder: upload recursively)")
 def upload_cmd(
     path: Annotated[Path, typer.Argument(help="Local file or directory path")],
-    folder: Annotated[str, typer.Option("--folder", "-f", help="Remote folder path")] = "",
+    folder: Annotated[str, typer.Option("--folder", "-f", help="Remote folder path or full URL")] = "",
     name: Annotated[Optional[str], typer.Option("--name", "-n", help="Remote filename (only for file; default: local name)")] = None,
     base_url: _base_url_option = None,
 ) -> None:
     if not path.exists():
         typer.echo(f"error: not found: {path}", err=True)
         raise typer.Exit(1)
+    folder_path, url_override = _parse_path_or_url(folder or "")
+    base_url = url_override or base_url
     client = _require_client(base_url)
     try:
         if path.is_file():
             content = path.read_bytes()
             remote_name = name or path.name
             r = client.upload_file(
-                folder,
+                folder_path,
                 content,
                 filename=remote_name,
                 use_put=True,
@@ -164,7 +185,7 @@ def upload_cmd(
                 raise typer.Exit(1)
             typer.echo("Uploaded.")
         elif path.is_dir():
-            ok, failed = client.upload_folder((folder or "").strip("/"), path)
+            ok, failed = client.upload_folder(folder_path, path)
             client.close()
             typer.echo(f"Uploaded {ok} file(s).")
             if failed:
@@ -188,16 +209,16 @@ def upload_cmd(
 
 @app.command("download", help="Download a file")
 def download_cmd(
-    remote_path: Annotated[str, typer.Argument(help="Remote path (e.g. data/foo.txt)")],
+    remote_path: Annotated[str, typer.Argument(help="Remote path or full URL (e.g. data/foo.txt or http://host:port/data/foo.txt)")],
     output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Local path (default: same name)")] = None,
     base_url: _base_url_option = None,
 ) -> None:
+    remote, url_override = _parse_path_or_url(remote_path or "")
+    base_url = url_override or base_url
     client = _require_client(base_url)
-    # 前有无 / 均可
-    remote = (remote_path or "").strip("/")
-    out = str(output) if output is not None else Path(remote).name
+    out = str(output) if output is not None else Path(remote).name if remote else "index.html"
     try:
-        client.download_file(remote, save_to=out)
+        client.download_file(remote or "/", save_to=out)
     except Exception as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(1)
@@ -209,11 +230,13 @@ def download_cmd(
 # ------------------------- mkdir -------------------------
 
 
-@app.command("mkdir", help="Create a folder (path: e.g. data/myfolder or /data/myfolder)")
+@app.command("mkdir", help="Create a folder (path or full URL)")
 def mkdir_cmd(
-    path: Annotated[str, typer.Argument(help="Full path (leading / optional)")],
+    path: Annotated[str, typer.Argument(help="Full path or URL (e.g. data/myfolder or http://host/data/myfolder)")],
     base_url: _base_url_option = None,
 ) -> None:
+    path, url_override = _parse_path_or_url(path or "")
+    base_url = url_override or base_url
     path = (path or "").strip("/")
     if "/" in path:
         parent, new_name = path.rsplit("/", 1)
@@ -239,11 +262,13 @@ def mkdir_cmd(
 # ------------------------- delete -------------------------
 
 
-@app.command("delete", help="Delete a file (path: e.g. data/foo.txt or /data/foo.txt)")
+@app.command("delete", help="Delete a file (path or full URL)")
 def delete_cmd(
-    path: Annotated[str, typer.Argument(help="Full path (leading / optional)")],
+    path: Annotated[str, typer.Argument(help="Full path or URL (e.g. data/foo.txt or http://host/data/foo.txt)")],
     base_url: _base_url_option = None,
 ) -> None:
+    path, url_override = _parse_path_or_url(path or "")
+    base_url = url_override or base_url
     path = (path or "").strip("/")
     if "/" in path:
         folder, filename = path.rsplit("/", 1)
