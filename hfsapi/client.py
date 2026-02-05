@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator
+from typing import Any, BinaryIO, Callable, Iterator
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -197,8 +197,9 @@ class HFSClient:
         self,
         file_content: BinaryIO | bytes,
         referer: str,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[bytes | Iterator[bytes], dict[str, str], bool]:
-        """生成 PUT body 与 headers；若为可 seek 的文件对象则流式（迭代器 + Content-Length），否则整块读入。"""
+        """生成 PUT body 与 headers；若为可 seek 的文件对象则流式（迭代器 + Content-Length），否则整块读入。on_progress(sent, total) 在流式时每块后调用。"""
         headers = {**self._post_headers(), "Referer": referer}
         if isinstance(file_content, bytes):
             headers["Content-Length"] = str(len(file_content))
@@ -211,9 +212,22 @@ class HFSClient:
             body = file_content.read()
             headers["Content-Length"] = str(len(body))
             return body, headers, False
-        body_iter: Iterator[bytes] = iter(lambda: file_content.read(self.UPLOAD_CHUNK_SIZE), b"")
+
+        def stream_chunks() -> Iterator[bytes]:
+            sent = 0
+            if on_progress:
+                on_progress(0, size)
+            while True:
+                chunk = file_content.read(self.UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                sent += len(chunk)
+                if on_progress:
+                    on_progress(sent, size)
+                yield chunk
+
         headers["Content-Length"] = str(size)
-        return body_iter, headers, True
+        return stream_chunks(), headers, True
 
     def upload_file(
         self,
@@ -224,6 +238,7 @@ class HFSClient:
         use_put: bool = False,
         put_params: dict[str, str] | None = None,
         use_session_for_put: bool = False,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> httpx.Response:
         """
         上传文件到指定目录。大文件会流式上传（按块读取），不整文件读入内存。
@@ -234,19 +249,19 @@ class HFSClient:
         :param use_put: True 时用 PUT /{folder}/{filename}，否则用 POST /{folder} multipart
         :param put_params: PUT 时附加的 query 参数（与前端一致时可传 resume=0! 等）
         :param use_session_for_put: True 时用仅 session（无 Basic）发 PUT，与浏览器一致，需先 login()
+        :param on_progress: 可选，流式上传时每块后调用 on_progress(sent_bytes, total_bytes)
         :return: 响应对象，可检查 .status_code 与 .json()
         """
         folder = folder.strip("/")
         if use_put:
             if not filename:
                 raise ValueError("use_put=True 时必须提供 filename")
-            # 使用相对路径并做 UTF-8 百分号编码，避免中文等非 ASCII 路径导致 ascii codec 错误
             path = f"{folder}/{filename}".replace("//", "/") if folder else filename
             url = _path_for_url(path)
             if put_params:
                 url = f"{url}?{urlencode(put_params)}"
             referer = f"{self.base_url}{_path_for_url(folder)}{'/' if folder else ''}" if folder else f"{self.base_url}/"
-            body, headers, is_stream = self._upload_body_and_headers(file_content, referer)
+            body, headers, is_stream = self._upload_body_and_headers(file_content, referer, on_progress)
             if use_session_for_put and self.username and self.password:
                 session_client = httpx.Client(
                     base_url=self.base_url,
@@ -265,7 +280,7 @@ class HFSClient:
                         url_rel = f"/{filename}?{urlencode(put_params)}" if put_params else f"/{filename}"
                         if is_stream and hasattr(file_content, "seek"):
                             file_content.seek(0)
-                            body, headers, _ = self._upload_body_and_headers(file_content, referer)
+                            body, headers, _ = self._upload_body_and_headers(file_content, referer, on_progress)
                         r = session_client.put(url_rel, content=body, headers=headers)
                     return r
                 finally:

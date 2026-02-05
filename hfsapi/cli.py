@@ -13,6 +13,40 @@ from urllib.parse import urlparse
 
 import typer
 
+
+def _format_size(n: int) -> str:
+    """将字节数格式化为人类可读（KiB/MiB/GiB）。"""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KiB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MiB"
+    return f"{n / (1024 * 1024 * 1024):.1f} GiB"
+
+
+def _make_progress_callback(filename: str) -> tuple[object, object]:
+    """返回 (on_progress(sent, total) 回调, finish 回调)。进度条输出到 stderr。"""
+    last_pct: list[int] = [-1]
+    bar_width = 24
+
+    def on_progress(sent: int, total_bytes: int) -> None:
+        if total_bytes <= 0:
+            return
+        pct = min(100, int(100 * sent / total_bytes))
+        if pct != last_pct[0] and (pct % 5 == 0 or pct == 100 or sent == total_bytes):
+            last_pct[0] = pct
+            filled = int(bar_width * pct / 100) if pct < 100 else bar_width
+            bar = "=" * filled + ">" * (1 if filled < bar_width else 0) + " " * (bar_width - filled - (1 if filled < bar_width else 0))
+            sys.stderr.write(f"\r  {filename} [{bar}] {pct}% {_format_size(sent)}/{_format_size(total_bytes)}   ")
+            sys.stderr.flush()
+
+    def finish() -> None:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+
+    return on_progress, finish
+
 from hfsapi import HFSClient, entry_created, entry_modified, entry_size
 from hfsapi.cli_config import clear_config, load_config, save_config
 
@@ -159,6 +193,7 @@ def upload_cmd(
     path: Annotated[Path, typer.Argument(help="Local file or directory path")],
     folder: Annotated[str, typer.Option("--folder", "-f", help="Remote folder path or full URL")] = "",
     name: Annotated[Optional[str], typer.Option("--name", "-n", help="Remote filename (only for file; default: local name)")] = None,
+    progress: Annotated[bool, typer.Option("--progress", "-p", help="Show upload progress (single file only)")] = False,
     base_url: _base_url_option = None,
 ) -> None:
     if not path.exists():
@@ -170,15 +205,21 @@ def upload_cmd(
     try:
         if path.is_file():
             remote_name = name or path.name
-            with path.open("rb") as f:
-                r = client.upload_file(
-                    folder_path,
-                    f,
-                    filename=remote_name,
-                    use_put=True,
-                    put_params={"resume": "0!"},
-                    use_session_for_put=True,
-                )
+            on_progress, progress_finish = (_make_progress_callback(remote_name) if progress else (None, lambda: None))
+            try:
+                with path.open("rb") as f:
+                    r = client.upload_file(
+                        folder_path,
+                        f,
+                        filename=remote_name,
+                        use_put=True,
+                        put_params={"resume": "0!"},
+                        use_session_for_put=True,
+                        on_progress=on_progress,
+                    )
+            finally:
+                if progress:
+                    progress_finish()
             client.close()
             if r.status_code not in (200, 201):
                 typer.echo(f"error: upload {r.status_code} {r.text}", err=True)

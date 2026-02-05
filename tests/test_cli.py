@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from hfsapi.cli import app
+from hfsapi.cli import app, _format_size, _make_progress_callback
 
 from tests.config import (
     HFS_BASE_URL,
@@ -142,6 +142,30 @@ def test_info_logged_in() -> None:
     assert "auth: yes" in result.stdout
 
 
+# ------------------------- progress / format_size -------------------------
+
+
+def test_format_size() -> None:
+    """_format_size 将字节数格式化为 B/KiB/MiB/GiB。"""
+    assert _format_size(0) == "0 B"
+    assert _format_size(100) == "100 B"
+    assert _format_size(1024) == "1.0 KiB"
+    assert _format_size(1024 * 1024) == "1.0 MiB"
+    assert _format_size(1024 * 1024 * 1024) == "1.0 GiB"
+    assert _format_size(1536 * 1024) == "1.5 MiB"
+
+
+def test_make_progress_callback_invokes() -> None:
+    """_make_progress_callback 返回的 on_progress 可调用且不抛错；finish 换行。"""
+    on_progress, finish = _make_progress_callback("foo.bin")
+    assert callable(on_progress)
+    assert callable(finish)
+    on_progress(0, 100)
+    on_progress(50, 100)
+    on_progress(100, 100)
+    finish()
+
+
 # ------------------------- path or URL 解析 -------------------------
 
 
@@ -240,6 +264,27 @@ def test_upload_with_path_folder_calls_client(tmp_path: Path) -> None:
         runner.invoke(app, ["upload", str(f), "--folder", HFS_SHARE_NAME])
     mock_client.upload_file.assert_called_once()
     assert mock_client.upload_file.call_args[0][0] == HFS_SHARE_NAME
+    assert mock_client.upload_file.call_args[1].get("on_progress") is None
+
+
+def test_upload_with_progress_passes_callback(tmp_path: Path) -> None:
+    """upload 带 --progress/-p 时传入可调用的 on_progress，且上传成功。"""
+    from hfsapi.cli_config import save_config
+
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    mock_client = MagicMock()
+    mock_client.upload_file.return_value = MagicMock(status_code=200)
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client):
+        result = runner.invoke(app, ["upload", str(f), "--folder", HFS_SHARE_NAME, "--progress"])
+    assert result.exit_code == 0
+    mock_client.upload_file.assert_called_once()
+    on_progress = mock_client.upload_file.call_args[1].get("on_progress")
+    assert on_progress is not None and callable(on_progress)
+    on_progress(500, 1000)
+    on_progress(1000, 1000)
 
 
 def test_upload_with_url_folder_parses_and_calls(tmp_path: Path) -> None:
