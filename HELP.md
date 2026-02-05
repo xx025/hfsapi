@@ -79,6 +79,21 @@ uv run pytest tests/test_api_permissions.py -v -m integration
 
 若服务器不可达（`http://172.0.0.1:8280`），相关用例会自动 **skip**。
 
+### 大文件上传测试（1–10GB）
+
+`tests/test_upload_large_file.py` 会生成指定体积的临时文件并测试**流式上传**。配置在 `tests/config.py`：
+
+- **LARGE_FILE_SIZE_GB**：文件体积（GB），支持 1–10，默认 1
+- **LARGE_FILE_CLIENT_TIMEOUT**：上传超时（秒），1–10GB 建议 ≥600
+- 体积 ≥1GB 时只测流式上传（不测非流式，避免整文件读入内存 OOM）
+
+```bash
+# 使用默认 1GB 运行大文件上传测试（需 HFS 可达）
+uv run pytest tests/test_upload_large_file.py -v -m integration -s
+```
+
+要测 10GB：在 `tests/config.py` 中设 `LARGE_FILE_SIZE_GB = 10`，再执行上述命令（耗时会较长，请保证磁盘与网络空间充足）。
+
 ### 上传方式说明
 
 当前测试环境（`http://172.0.0.1:8280/data/`）下，**PUT** 上传可用（与 [HFS 前端](https://github.com/rejetto/hfs) 一致）：  

@@ -169,16 +169,16 @@ def upload_cmd(
     client = _require_client(base_url)
     try:
         if path.is_file():
-            content = path.read_bytes()
             remote_name = name or path.name
-            r = client.upload_file(
-                folder_path,
-                content,
-                filename=remote_name,
-                use_put=True,
-                put_params={"resume": "0!"},
-                use_session_for_put=True,
-            )
+            with path.open("rb") as f:
+                r = client.upload_file(
+                    folder_path,
+                    f,
+                    filename=remote_name,
+                    use_put=True,
+                    put_params={"resume": "0!"},
+                    use_session_for_put=True,
+                )
             client.close()
             if r.status_code not in (200, 201):
                 typer.echo(f"error: upload {r.status_code} {r.text}", err=True)

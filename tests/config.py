@@ -33,3 +33,11 @@ HFS_PASSWORD = HFS_TEST_ACCOUNTS[0]["password"]
 # ---------- 本地目录 ----------
 _TESTS_DIR = Path(__file__).resolve().parent
 RUNS_DIR = _TESTS_DIR.parent / "runs"
+
+# ---------- 大文件上传测试（test_upload_large_file.py） ----------
+# 大文件体积（GB），支持 1–10。测试会生成该大小的临时文件并做流式上传；≥1GB 时不跑非流式对比（避免 OOM）
+LARGE_FILE_SIZE_GB = 1
+# 当体积 < 1GB 时，会同时跑非流式上传并对比耗时；流式耗时允许为非流式的上限倍数
+LARGE_FILE_STREAMING_MAX_SLOWDOWN = 2.5
+# 大文件上传/下载客户端超时（秒），1–10GB 建议 600 以上
+LARGE_FILE_CLIENT_TIMEOUT = 600

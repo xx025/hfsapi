@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Iterator
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -191,6 +191,30 @@ class HFSClient:
 
     # ------------------------- 上传（对应「谁可以上传」） -------------------------
 
+    UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MiB，大文件流式上传块大小，避免整文件读入内存
+
+    def _upload_body_and_headers(
+        self,
+        file_content: BinaryIO | bytes,
+        referer: str,
+    ) -> tuple[bytes | Iterator[bytes], dict[str, str], bool]:
+        """生成 PUT body 与 headers；若为可 seek 的文件对象则流式（迭代器 + Content-Length），否则整块读入。"""
+        headers = {**self._post_headers(), "Referer": referer}
+        if isinstance(file_content, bytes):
+            headers["Content-Length"] = str(len(file_content))
+            return file_content, headers, False
+        try:
+            file_content.seek(0, 2)
+            size = file_content.tell()
+            file_content.seek(0)
+        except (AttributeError, OSError):
+            body = file_content.read()
+            headers["Content-Length"] = str(len(body))
+            return body, headers, False
+        body_iter: Iterator[bytes] = iter(lambda: file_content.read(self.UPLOAD_CHUNK_SIZE), b"")
+        headers["Content-Length"] = str(size)
+        return body_iter, headers, True
+
     def upload_file(
         self,
         folder: str,
@@ -202,10 +226,10 @@ class HFSClient:
         use_session_for_put: bool = False,
     ) -> httpx.Response:
         """
-        上传文件到指定目录。
+        上传文件到指定目录。大文件会流式上传（按块读取），不整文件读入内存。
 
         :param folder: 目录路径，如 "" 或 "share" 或 "share/sub"
-        :param file_content: 文件内容（文件对象或 bytes）
+        :param file_content: 文件内容（文件对象或 bytes）；文件对象支持 seek 时可流式上传
         :param filename: 使用 PUT 时的文件名；POST 时由服务端从 multipart 解析
         :param use_put: True 时用 PUT /{folder}/{filename}，否则用 POST /{folder} multipart
         :param put_params: PUT 时附加的 query 参数（与前端一致时可传 resume=0! 等）
@@ -219,15 +243,10 @@ class HFSClient:
             # 使用相对路径并做 UTF-8 百分号编码，避免中文等非 ASCII 路径导致 ascii codec 错误
             path = f"{folder}/{filename}".replace("//", "/") if folder else filename
             url = _path_for_url(path)
-            if isinstance(file_content, bytes):
-                body = file_content
-            else:
-                body = file_content.read()
             if put_params:
                 url = f"{url}?{urlencode(put_params)}"
-            # 与 HFS 前端一致：Referer 为当前目录 URL（路径需编码）
             referer = f"{self.base_url}{_path_for_url(folder)}{'/' if folder else ''}" if folder else f"{self.base_url}/"
-            headers = {**self._post_headers(), "Referer": referer}
+            body, headers, is_stream = self._upload_body_and_headers(file_content, referer)
             if use_session_for_put and self.username and self.password:
                 session_client = httpx.Client(
                     base_url=self.base_url,
@@ -244,6 +263,9 @@ class HFSClient:
                     # HFS roots：若 host 映射到 root（如 /data），需发 PUT /filename 相对 root
                     if r.status_code == 404 and folder:
                         url_rel = f"/{filename}?{urlencode(put_params)}" if put_params else f"/{filename}"
+                        if is_stream and hasattr(file_content, "seek"):
+                            file_content.seek(0)
+                            body, headers, _ = self._upload_body_and_headers(file_content, referer)
                         r = session_client.put(url_rel, content=body, headers=headers)
                     return r
                 finally:
@@ -289,15 +311,15 @@ class HFSClient:
                 continue
             rel = f.relative_to(local_path)
             rel_str = str(rel).replace("\\", "/")
-            content = f.read_bytes()
-            r = self.upload_file(
-                parent_folder,
-                content,
-                filename=rel_str,
-                use_put=use_put,
-                put_params=put_params,
-                use_session_for_put=use_put,
-            )
+            with f.open("rb") as fp:
+                r = self.upload_file(
+                    parent_folder,
+                    fp,
+                    filename=rel_str,
+                    use_put=use_put,
+                    put_params=put_params,
+                    use_session_for_put=use_put,
+                )
             if r.status_code in (200, 201):
                 ok += 1
             else:
