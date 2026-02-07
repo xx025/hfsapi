@@ -67,29 +67,17 @@ class HFSClient:
         self._api_base = f"{self.base_url}/~/api"
         self._client: httpx.Client | None = None
 
-    def _username_has_non_ascii(self) -> bool:
-        """用户名是否含非 ASCII（如中文）；此类账号用会话认证避免服务端 Basic 解码问题。"""
-        if not self.username:
-            return False
-        return any(ord(c) > 127 for c in self.username)
-
     def _get_client(self) -> httpx.Client:
         if self._client is None or self._client.is_closed:
-            auth = None
-            use_session_for_non_ascii = False
-            if self.username is not None and self.password is not None:
-                if self._username_has_non_ascii():
-                    use_session_for_non_ascii = True
-                else:
-                    auth = (self.username, self.password)
+            # 统一只用 session（?login=）认证，不用 Basic，保证 /~/api/* 与上传等行为一致
             self._client = httpx.Client(
                 base_url=self.base_url,
-                auth=auth,
+                auth=None,
                 timeout=self.timeout,
                 verify=self.verify,
                 follow_redirects=True,
             )
-            if use_session_for_non_ascii:
+            if self.username is not None and self.password is not None:
                 login_value = f"{self.username}:{self.password}"
                 self._client.get(f"/?{urlencode({'login': login_value})}")
         return self._client
@@ -340,30 +328,19 @@ class HFSClient:
                 url = f"{url}?{urlencode(put_params)}"
             referer = f"{self.base_url}{_path_for_url(folder)}{'/' if folder else ''}" if folder else f"{self.base_url}/"
             body, headers, is_stream = self._upload_body_and_headers(file_content, referer, on_progress)
-            if use_session_for_put and self.username and self.password:
-                session_client = httpx.Client(
-                    base_url=self.base_url,
-                    timeout=self.timeout,
-                    verify=self.verify,
-                    follow_redirects=True,
-                )
-                try:
-                    login_value = f"{self.username}:{self.password}"
-                    session_client.get(f"/?{urlencode({'login': login_value})}")
-                    if folder:
-                        session_client.get(f"{_path_for_url(folder)}/")
-                    r = session_client.put(url, content=body, headers=headers)
-                    # HFS roots：若 host 映射到 root（如 /data），需发 PUT /filename 相对 root
-                    if r.status_code == 404 and folder:
-                        url_rel = f"/{filename}?{urlencode(put_params)}" if put_params else f"/{filename}"
-                        if is_stream and hasattr(file_content, "seek"):
-                            file_content.seek(0)
-                            body, headers, _ = self._upload_body_and_headers(file_content, referer, on_progress)
-                        r = session_client.put(url_rel, content=body, headers=headers)
-                    return r
-                finally:
-                    session_client.close()
-            return self._get_client().put(url, content=body, headers=headers)
+            # 统一使用同一 client（已通过 ?login= 建立 session），不再单独建 session_client
+            client = self._get_client()
+            if use_session_for_put and folder:
+                client.get(f"{_path_for_url(folder)}/")
+            r = client.put(url, content=body, headers=headers)
+            # HFS roots：若 host 映射到 root（如 /data），需发 PUT /filename 相对 root
+            if r.status_code == 404 and folder:
+                url_rel = f"/{filename}?{urlencode(put_params)}" if put_params else f"/{filename}"
+                if is_stream and hasattr(file_content, "seek"):
+                    file_content.seek(0)
+                    body, headers, _ = self._upload_body_and_headers(file_content, referer, on_progress)
+                r = client.put(url_rel, content=body, headers=headers)
+            return r
         # POST multipart：HFS 文档写的是 curl -F upload=@FILE FOLDER/，字段名用 upload（路径需编码）
         url = f"{self.base_url}{_path_for_url(folder)}" if folder else self.base_url
         if isinstance(file_content, bytes):
