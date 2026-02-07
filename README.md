@@ -58,7 +58,8 @@ After installing (e.g. `uv tool install hfsapi` or `pip install hfsapi`), the `h
 hfs login --base-url http://127.0.0.1:8280 -u abct -p abc123
 hfs list /data
 hfs upload ./local.txt --folder data
-hfs upload ./mydir --folder data   # folder: upload recursively
+hfs upload ./mydir --folder data   # folder: upload contents into --folder (rclone-style)
+hfs upload ./file.txt -f data -u -p   # -u print link after upload (resolves server-renamed name), -p progress
 hfs mkdir data/myfolder
 hfs download data/foo.txt -o ./foo.txt
 hfs delete data/foo.txt
@@ -81,6 +82,8 @@ See `hfs --help` and `hfs <command> --help` for options.
 | **get_file_list**(uri, offset, limit, search, request_c_and_m) | Get directory listing, current user permissions, and entry metadata. |
 | **list_entries**(uri, ...) | Returns only the `list` array from `get_file_list`. |
 | **upload_file**(folder, file_content, filename, use_put, put_params, use_session_for_put) | Upload a file to the given folder. |
+| **upload_folder**(parent_folder, local_path, on_file_progress, on_progress) | Recursively upload directory contents (rclone-style). |
+| **get_resource_url**(path, human_readable) / **get_uploaded_file_url**(folder, filename, response) | Build URL for a path; resolve real filename after upload (e.g. when server renames). |
 | **create_folder**(parent_folder, new_name, use_put) | Create a new folder under the parent (same as “New folder” in the web UI). |
 | **delete_file**(folder, filename) | Delete a file under the given folder. |
 | **get_config**(only, omit) / **set_config**(values) | Read/write HFS config; e.g. VFS and permissions. |

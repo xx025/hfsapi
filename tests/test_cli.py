@@ -304,6 +304,73 @@ def test_upload_with_url_folder_parses_and_calls(tmp_path: Path) -> None:
     assert mock_client.upload_file.call_args[0][0] == HFS_SHARE_NAME
 
 
+def test_upload_show_url_prints_link_file(tmp_path: Path) -> None:
+    """upload 带 --show-url/-u 时上传成功后输出真实文件链接（走 get_uploaded_file_url，可含重命名后 URL）。"""
+    from hfsapi.cli_config import save_config
+
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    mock_response = MagicMock(status_code=200)
+    mock_client = MagicMock()
+    mock_client.upload_file.return_value = mock_response
+    mock_client.get_uploaded_file_url.return_value = "http://127.0.0.1:8280/data/f.txt"
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client):
+        result = runner.invoke(app, ["upload", str(f), "--folder", HFS_SHARE_NAME, "--show-url"])
+    assert result.exit_code == 0
+    assert "http://127.0.0.1:8280/data/f.txt" in result.stdout
+    mock_client.get_uploaded_file_url.assert_called_once()
+    assert mock_client.get_uploaded_file_url.call_args[0][:2] == (HFS_SHARE_NAME, "f.txt")
+    assert mock_client.get_uploaded_file_url.call_args[0][2] is mock_response
+
+
+def test_upload_folder_with_progress_passes_callback(tmp_path: Path) -> None:
+    """upload 目录且带 --progress/-p 时传入 on_file_progress 与 on_progress，上传成功后显示双进度条。"""
+    from hfsapi.cli_config import save_config
+
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
+    d = tmp_path / "mydir"
+    d.mkdir()
+    (d / "a.txt").write_text("a")
+    (d / "b.txt").write_text("b")
+    mock_client = MagicMock()
+    mock_client.upload_folder.return_value = (2, [])
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client):
+        runner.invoke(app, ["upload", str(d), "--folder", HFS_SHARE_NAME, "--progress"])
+    mock_client.upload_folder.assert_called_once()
+    on_file_progress = mock_client.upload_folder.call_args[1].get("on_file_progress")
+    on_progress = mock_client.upload_folder.call_args[1].get("on_progress")
+    assert on_file_progress is not None and callable(on_file_progress)
+    assert on_progress is not None and callable(on_progress)
+    on_file_progress(1, 2, "a.txt", 1)
+    on_progress(1, 1)
+    on_file_progress(2, 2, "b.txt", 1)
+    on_progress(1, 1)
+
+
+def test_upload_show_url_prints_link_folder(tmp_path: Path) -> None:
+    """upload 目录且带 --show-url 时上传成功后输出文件夹链接。"""
+    from hfsapi.cli_config import save_config
+
+    save_config(HFS_BASE_URL, HFS_USERNAME, HFS_PASSWORD)
+    d = tmp_path / "mydir"
+    d.mkdir()
+    (d / "a.txt").write_text("a")
+    mock_client = MagicMock()
+    mock_client.upload_folder.return_value = (1, [])
+    mock_client.get_resource_url.return_value = "http://127.0.0.1:8280/data"
+
+    with patch("hfsapi.cli._get_client", return_value=mock_client):
+        result = runner.invoke(app, ["upload", str(d), "--folder", HFS_SHARE_NAME, "-u"])
+    assert result.exit_code == 0
+    assert "http://127.0.0.1:8280/data" in result.stdout
+    mock_client.get_resource_url.assert_called_once()
+    # 上传目录时文件落在 folder_path 下，返回的链接是 folder_path 本身，不是 folder_path/mydir
+    assert mock_client.get_resource_url.call_args[0][0] == HFS_SHARE_NAME
+
+
 def test_download_with_path_calls_client() -> None:
     """download 使用路径时调用 download_file（path 来自 config）。"""
     from hfsapi.cli_config import save_config

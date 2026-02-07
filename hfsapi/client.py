@@ -8,11 +8,19 @@ HFS (HTTP File Server) Python API 客户端。
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterator
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 import httpx
+
+
+def _url_path_readable(url: str) -> str:
+    """将 URL 的 path 部分解码为人类可读（如 %20 -> 空格，%281%29 -> (1)）。"""
+    p = urlparse(url)
+    path = unquote(p.path)
+    return f"{p.scheme}://{p.netloc}{path}" + (f"?{p.query}" if p.query else "") + (f"#{p.fragment}" if p.fragment else "")
 
 
 def _path_for_url(path: str) -> str:
@@ -20,7 +28,7 @@ def _path_for_url(path: str) -> str:
     segments = (path.strip("/").split("/") if path.strip("/") else [])
     return "/" + "/".join(quote(seg, safe="") for seg in segments) if segments else "/"
 
-from hfsapi.models import DirEntry, FileListResponse
+from hfsapi.models import DirEntry, FileListResponse, entry_modified
 
 # POST 请求需携带的防 CSRF 头（HFS OpenAPI 要求）
 HFS_ANTI_CSRF_HEADER = "x-hfs-anti-csrf"
@@ -100,6 +108,76 @@ class HFSClient:
 
     def __exit__(self, *args: Any) -> None:
         self.close()
+
+    def get_resource_url(self, path: str, *, human_readable: bool = False) -> str:
+        """
+        返回指定路径对应的可访问 URL（用于上传后生成文件/文件夹链接）。
+
+        :param path: 相对路径，如 "share"、"share/file.txt" 或 "share/sub/file.txt"
+        :param human_readable: 为 True 时 path 不百分号编码（空格、括号等人类可读，浏览器粘贴时会自动编码）
+        :return: 完整 URL，如 "http://127.0.0.1:8280/share/file.txt"
+        """
+        raw = self.base_url + _path_for_url(path.strip("/"))
+        return _url_path_readable(raw) if human_readable else raw
+
+    def get_uploaded_file_url(
+        self,
+        folder: str,
+        requested_filename: str,
+        response: httpx.Response,
+    ) -> str:
+        """
+        根据上传响应解析出实际文件 URL（服务端可能因「同名自动重命名」改了文件名）。
+
+        先尝试响应头 Location；若无则列出父目录，按「精确名或 base (N).ext」+ 最新 mtime 匹配。
+
+        :param folder: 上传时的远程目录，如 "data"
+        :param requested_filename: 上传时请求的文件名（可含子路径），如 "file.txt" 或 "sub/file.txt"
+        :param response: upload_file 的响应对象
+        :return: 实际可访问的完整 URL
+        """
+        location = response.headers.get("location") or response.headers.get("Location")
+        if location:
+            location = location.strip()
+            if location.startswith(("http://", "https://")):
+                return _url_path_readable(location)
+            if location.startswith("/"):
+                return self.base_url.rstrip("/") + unquote(location)
+            # 相对路径
+            path = f"{folder.rstrip('/')}/{unquote(location)}".strip("/")
+            return self.get_resource_url(path, human_readable=True)
+        # 无 Location：列父目录，按「精确或 base (N).ext」+ 最新 mtime 取实际名
+        folder = folder.strip("/")
+        req_path = Path(requested_filename)
+        base_name = req_path.name
+        parent_rel = req_path.parent
+        parent_path = f"{folder}/{parent_rel}".strip("/") if str(parent_rel) != "." else folder
+        uri = "/" + parent_path if parent_path else "/"
+        try:
+            data = self.get_file_list(uri, request_c_and_m=True)
+        except Exception:
+            return self.get_resource_url(f"{parent_path}/{base_name}".strip("/"), human_readable=True)
+        entries = data.get("list") or []
+        stem = req_path.stem
+        ext = req_path.suffix
+        pattern = re.compile(r"^" + re.escape(stem) + r" \((\d+)\)" + re.escape(ext) + r"$")
+        candidates = [
+            e for e in entries
+            if isinstance(e.get("n"), str) and (e["n"] == base_name or pattern.match(e["n"]))
+        ]
+        if not candidates:
+            return self.get_resource_url(f"{parent_path}/{base_name}".strip("/"), human_readable=True)
+        # 服务端同名重命名为 base (1).ext, base (2).ext … 刚上传的为 N 最大的；先按 N 降序，再按 mtime 降序
+        def _sort_key(ent: dict[str, Any]) -> tuple[int, str]:
+            n = ent.get("n") or ""
+            m = pattern.match(n)
+            num = int(m.group(1)) if m else 0
+            mtime = entry_modified(ent) or ""
+            return (num, mtime)
+        candidates.sort(key=_sort_key, reverse=True)
+        actual_name = candidates[0]["n"]
+        full_path = f"{parent_path}/{actual_name}".strip("/")
+        return self.get_resource_url(full_path, human_readable=True)
 
     # ------------------------- 登录与会话 -------------------------
 
@@ -303,9 +381,11 @@ class HFSClient:
         local_path: str | Path,
         *,
         use_put: bool = True,
+        on_file_progress: Callable[[int, int, str, int], None] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[int, list[tuple[str, str]]]:
         """
-        递归上传本地目录到远程 parent_folder，保持相对路径结构。
+        递归上传本地目录内容到远程 parent_folder（rclone 风格：不把本地目录名带到远程）。
 
         仅上传文件，子目录通过文件名中的路径（如 subdir/file.txt）由服务端自动创建。
         需当前用户有 can_upload 权限。
@@ -313,19 +393,24 @@ class HFSClient:
         :param parent_folder: 远程父目录，如 "data"
         :param local_path: 本地目录路径
         :param use_put: 是否使用 PUT 上传（与 upload_file 一致）
+        :param on_file_progress: 可选，每上传一个文件前调用 on_file_progress(当前序号, 总文件数, 相对路径, 文件字节数)
+        :param on_progress: 可选，每个文件上传过程中调用 on_progress(已发送字节, 该文件总字节)，用于单文件进度条
         :return: (成功数, 失败列表 [(相对路径, 错误信息)])
         """
         local_path = Path(local_path)
         if not local_path.is_dir():
             raise NotADirectoryError(f"not a directory: {local_path}")
+        files = [f for f in sorted(local_path.rglob("*")) if f.is_file()]
+        total = len(files)
         ok = 0
         failed: list[tuple[str, str]] = []
         put_params = {"resume": "0!"} if use_put else None
-        for f in sorted(local_path.rglob("*")):
-            if not f.is_file():
-                continue
+        for idx, f in enumerate(files):
             rel = f.relative_to(local_path)
             rel_str = str(rel).replace("\\", "/")
+            file_size = f.stat().st_size
+            if on_file_progress is not None:
+                on_file_progress(idx + 1, total, rel_str, file_size)
             with f.open("rb") as fp:
                 r = self.upload_file(
                     parent_folder,
@@ -334,6 +419,7 @@ class HFSClient:
                     use_put=use_put,
                     put_params=put_params,
                     use_session_for_put=use_put,
+                    on_progress=on_progress,
                 )
             if r.status_code in (200, 201):
                 ok += 1

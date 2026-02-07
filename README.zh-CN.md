@@ -58,7 +58,8 @@ with HFSClient("http://127.0.0.1:8280", username="abct", password="abc123") as c
 hfs login --base-url http://127.0.0.1:8280 -u abct -p abc123
 hfs list /data
 hfs upload ./local.txt --folder data
-hfs upload ./mydir --folder data   # 目录：递归上传
+hfs upload ./mydir --folder data   # 目录：内容直接进 --folder（rclone 风格）
+hfs upload ./file.txt -f data -u -p   # -u 上传后打印链接（含服务端重命名后的真实名），-p 进度条
 hfs mkdir data/myfolder
 hfs download data/foo.txt -o ./foo.txt
 hfs delete data/foo.txt
@@ -81,6 +82,8 @@ hfs logout
 | **get_file_list**(uri, offset, limit, search, request_c_and_m) | 获取目录列表及当前用户在该目录的权限、条目元数据。 |
 | **list_entries**(uri, ...) | 仅返回 `get_file_list` 的 `list` 数组。 |
 | **upload_file**(folder, file_content, filename, use_put, put_params, use_session_for_put) | 上传文件到指定目录。 |
+| **upload_folder**(parent_folder, local_path, on_file_progress, on_progress) | 递归上传目录内容（rclone 风格）。 |
+| **get_resource_url**(path, human_readable) / **get_uploaded_file_url**(folder, filename, response) | 生成路径 URL；上传后解析真实文件名（如服务端重命名）。 |
 | **create_folder**(parent_folder, new_name, use_put) | 在父目录下创建新文件夹（与网页「新建文件夹」一致）。 |
 | **delete_file**(folder, filename) | 删除指定目录下的文件。 |
 | **get_config**(only, omit) / **set_config**(values) | 读取/写入 HFS 配置；可改 VFS 与权限等。 |

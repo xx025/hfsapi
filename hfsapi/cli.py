@@ -25,6 +25,14 @@ def _format_size(n: int) -> str:
     return f"{n / (1024 * 1024 * 1024):.1f} GiB"
 
 
+def _progress_bar_string(pct: int, width: int = 24) -> str:
+    """根据百分比返回进度条字符串，如 [========>    ]。"""
+    pct = min(100, max(0, pct))
+    filled = int(width * pct / 100) if pct < 100 else width
+    bar = "=" * filled + ">" * (1 if filled < width else 0) + " " * (width - filled - (1 if filled < width else 0))
+    return f"[{bar}]"
+
+
 def _make_progress_callback(filename: str) -> tuple[object, object]:
     """返回 (on_progress(sent, total) 回调, finish 回调)。进度条输出到 stderr。"""
     last_pct: list[int] = [-1]
@@ -36,9 +44,8 @@ def _make_progress_callback(filename: str) -> tuple[object, object]:
         pct = min(100, int(100 * sent / total_bytes))
         if pct != last_pct[0] and (pct % 5 == 0 or pct == 100 or sent == total_bytes):
             last_pct[0] = pct
-            filled = int(bar_width * pct / 100) if pct < 100 else bar_width
-            bar = "=" * filled + ">" * (1 if filled < bar_width else 0) + " " * (bar_width - filled - (1 if filled < bar_width else 0))
-            sys.stderr.write(f"\r  {filename} [{bar}] {pct}% {_format_size(sent)}/{_format_size(total_bytes)}   ")
+            bar = _progress_bar_string(pct, bar_width)
+            sys.stderr.write(f"\r  {filename} {bar} {pct}% {_format_size(sent)}/{_format_size(total_bytes)}   ")
             sys.stderr.flush()
 
     def finish() -> None:
@@ -188,12 +195,25 @@ def ls_cmd(
 # ------------------------- upload -------------------------
 
 
-@app.command("upload", help="Upload a file or a folder (file: upload one file; folder: upload recursively)")
+@app.command(
+    "upload",
+    help="Upload a file or a folder. Folder: upload contents into --folder (rclone-style, no extra dir with local name).",
+)
 def upload_cmd(
     path: Annotated[Path, typer.Argument(help="Local file or directory path")],
-    folder: Annotated[str, typer.Option("--folder", "-f", help="Remote folder path or full URL")] = "",
+    folder: Annotated[
+        str,
+        typer.Option("--folder", "-f", help="Remote folder path or full URL. For dir: contents go here (no local dir name on remote)."),
+    ] = "",
     name: Annotated[Optional[str], typer.Option("--name", "-n", help="Remote filename (only for file; default: local name)")] = None,
     progress: Annotated[bool, typer.Option("--progress", "-p", help="Show upload progress (single file only)")] = False,
+    show_url: Annotated[
+        bool,
+        typer.Option(
+            "--show-url", "--url", "-u",
+            help="Print the real link after upload (single file: resolve actual name if server renamed; folder: target dir URL).",
+        ),
+    ] = False,
     base_url: _base_url_option = None,
 ) -> None:
     if not path.exists():
@@ -225,10 +245,59 @@ def upload_cmd(
                 typer.echo(f"error: upload {r.status_code} {r.text}", err=True)
                 raise typer.Exit(1)
             typer.echo("Uploaded.")
+            if show_url:
+                url = client.get_uploaded_file_url(folder_path, remote_name, r)
+                typer.echo(url)
         elif path.is_dir():
-            ok, failed = client.upload_folder(folder_path, path)
+            total_bytes = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+            total_files = sum(1 for _ in path.rglob("*") if _.is_file())
+            bytes_done: list[int] = [0]
+            current_file_size: list[int] = [0]
+            current_rel_path: list[str] = [""]
+            current_index: list[int] = [0]
+            bar_w = 24
+            drawn: list[bool] = [False]
+
+            def _on_file_progress(current: int, total: int, rel_path: str, file_size: int) -> None:
+                current_index[0] = current
+                current_file_size[0] = file_size
+                current_rel_path[0] = rel_path
+
+            def _on_progress(sent: int, total: int) -> None:
+                if total <= 0:
+                    return
+                overall_sent = bytes_done[0] + sent
+                overall_pct = int(100 * overall_sent / total_bytes) if total_bytes else 100
+                file_pct = int(100 * sent / total) if total else 100
+                if sent == total:
+                    bytes_done[0] += current_file_size[0]
+                if not drawn[0]:
+                    drawn[0] = True
+                else:
+                    sys.stderr.write("\033[2A\r")
+                # \033[K 清除到行尾，避免上一帧较长内容（如长文件名）残留
+                line1 = f"  [{current_index[0]}/{total_files}] {_progress_bar_string(file_pct, bar_w)} {file_pct}% {_format_size(sent)}/{_format_size(total)}  {current_rel_path[0]}\033[K"
+                line2 = f"  Total   {_progress_bar_string(overall_pct, bar_w)} {overall_pct}% ({_format_size(overall_sent)}/{_format_size(total_bytes)})\033[K"
+                sys.stderr.write(line1 + "\n" + line2 + "\n")
+                sys.stderr.flush()
+
+            on_file_progress = _on_file_progress if progress else None
+            on_progress = _on_progress if progress else None
+            ok, failed = client.upload_folder(
+                folder_path, path, on_file_progress=on_file_progress, on_progress=on_progress
+            )
+            if progress and drawn[0]:
+                sys.stderr.write("\033[2A\r")
+                total_final = total_bytes if total_bytes else bytes_done[0]
+                sys.stderr.write(f"  [{total_files}/{total_files}] {_progress_bar_string(100, bar_w)} 100%  {current_rel_path[0]}\033[K\n")
+                sys.stderr.write(f"  Total   {_progress_bar_string(100, bar_w)} 100% ({_format_size(total_final)}/{_format_size(total_bytes or 1)})\033[K\n")
+                sys.stderr.flush()
             client.close()
             typer.echo(f"Uploaded {ok} file(s).")
+            if show_url:
+                # 上传目录时文件直接落在 folder_path 下，不会多一层 path.name
+                folder_url_path = folder_path.strip("/") if folder_path else ""
+                typer.echo(client.get_resource_url(folder_url_path, human_readable=True))
             if failed:
                 for rel_path, msg in failed:
                     typer.echo(f"  failed: {rel_path} — {msg}", err=True)
